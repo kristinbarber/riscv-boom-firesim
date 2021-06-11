@@ -248,6 +248,8 @@ class FetchBundle(implicit p: Parameters) extends BoomBundle
   val fsrc    = UInt(BSRC_SZ.W)
   // Source of the prediction to this bundle
   val tsrc    = UInt(BSRC_SZ.W)
+
+  val debug_events = Vec(fetchWidth, new DebugStageEvents)
 }
 
 
@@ -571,6 +573,9 @@ class BoomFrontendModule(outer: BoomFrontend) extends LazyModuleImp(outer)
   val f3_ret_mask     = Wire(Vec(fetchWidth, Bool()))
   val f3_npc_plus4_mask = Wire(Vec(fetchWidth, Bool()))
   val f3_btb_mispredicts = Wire(Vec(fetchWidth, Bool()))
+
+  val fseq_reg = RegInit(0.U(xLen.W))
+
   f3_fetch_bundle.mask := f3_mask.asUInt
   f3_fetch_bundle.br_mask := f3_br_mask.asUInt
   f3_fetch_bundle.pc := f3_imemresp.pc
@@ -580,6 +585,10 @@ class BoomFrontendModule(outer: BoomFrontend) extends LazyModuleImp(outer)
   f3_fetch_bundle.fsrc := f3_imemresp.fsrc
   f3_fetch_bundle.tsrc := f3_imemresp.tsrc
   f3_fetch_bundle.shadowed_mask := f3_shadowed_mask
+
+  for (w <- 0 until fetchWidth) {
+    f3_fetch_bundle.debug_events(w).fetch_seq := DontCare
+  }
 
   // Tracks trailing 16b of previous fetch packet
   val f3_prev_half    = Reg(UInt(16.W))
@@ -764,6 +773,14 @@ class BoomFrontendModule(outer: BoomFrontend) extends LazyModuleImp(outer)
     f3_prev_is_half := bank_prev_is_half
     f3_prev_half    := bank_prev_half
     assert(f3_bpd_resp.io.deq.bits.pc === f3_fetch_bundle.pc)
+
+    for (i <- 0 until fetchWidth) {
+      if (i==0) {
+        f3_fetch_bundle.debug_events(i).fetch_seq := fseq_reg
+      } else {
+        f3_fetch_bundle.debug_events(i).fetch_seq := fseq_reg + PopCount(f3_fetch_bundle.mask.asUInt()(i-1,0))
+      }
+    }
   }
 
   when (f3_clear) {
@@ -914,7 +931,6 @@ class BoomFrontendModule(outer: BoomFrontend) extends LazyModuleImp(outer)
     f4.io.deq.bits.shadowed_mask.asUInt
   ).asBools
 
-
   ftq.io.enq.valid          := f4.io.deq.valid && fb.io.enq.ready && !f4_delay
   ftq.io.enq.bits           := f4.io.deq.bits
 
@@ -980,6 +996,19 @@ class BoomFrontendModule(outer: BoomFrontend) extends LazyModuleImp(outer)
   ftq.io.debug_ftq_idx := io.cpu.debug_ftq_idx
   io.cpu.debug_fetch_pc := ftq.io.debug_fetch_pc
 
+
+  when (f3.io.deq.fire()) {
+    fseq_reg := fseq_reg + PopCount(f3_fetch_bundle.mask)
+    val bundle = f3_fetch_bundle
+    for (i <- 0 until fetchWidth) {
+      when (bundle.mask(i)) {
+        printf(midas.targetutils.SynthesizePrintf("%d; O3PipeView:fetch:0x%x:DASM(%x)\n", 
+                                                  bundle.debug_events(i).fetch_seq,
+                                                  bundle.pc(i),
+                                                  bundle.insts(i)))
+      }
+    }
+  }
 
   override def toString: String =
     (BoomCoreStringPrefix("====Overall Frontend Params====") + "\n"

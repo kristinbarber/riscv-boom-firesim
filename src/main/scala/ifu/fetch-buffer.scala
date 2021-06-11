@@ -48,6 +48,7 @@ class FetchBuffer(implicit p: Parameters) extends BoomModule
 
     // Was the pipeline redirected? Clear/reset the fetchbuffer.
     val clear = Input(Bool())
+   
   })
 
   require (numEntries > fetchWidth)

@@ -569,6 +569,10 @@ class BoomMSHRFile(implicit edge: TLEdgeOut, p: Parameters) extends BoomModule()
   val lb_read_arb  = Module(new Arbiter(new LineBufferReadReq, cfg.nMSHRs))
   val lb_write_arb = Module(new Arbiter(new LineBufferWriteReq, cfg.nMSHRs))
 
+  for (i <- 0 until nLBEntries) {
+    printf (midas.targetutils.SynthesizePrintf("LFB[%d]: %x\n", i.U, lb(i)))
+  }
+
   lb_read_arb.io.out.ready  := false.B
   lb_write_arb.io.out.ready := true.B
 

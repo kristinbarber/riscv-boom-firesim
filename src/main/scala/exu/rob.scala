@@ -109,7 +109,7 @@ class RobIo(
   val flush_frontend = Output(Bool())
 
 
-  val debug_tsc = Input(UInt(xLen.W))
+  val debug_tsc = Input(UInt(width=xLen.W))
 }
 
 /**
@@ -347,6 +347,10 @@ class Rob(
         rob_bsy(row_idx)      := false.B
         rob_unsafe(row_idx)   := false.B
         rob_predicated(row_idx)  := wb_resp.bits.predicated
+        printf(midas.targetutils.SynthesizePrintf("%d; O3PipeView:complete\n",
+               io.debug_tsc))
+       //     rob_uop(row_idx).debug_events.fetch_seq))
+
       }
       // TODO check that fflags aren't overwritten
       // TODO check that the wb is to a valid ROB entry, give it a time stamp
@@ -364,6 +368,11 @@ class Rob(
         rob_unsafe(cidx) := false.B
         assert (rob_val(cidx) === true.B, "[rob] store writing back to invalid entry.")
         assert (rob_bsy(cidx) === true.B, "[rob] store writing back to a not-busy entry.")
+
+        printf(midas.targetutils.SynthesizePrintf("%d; O3PipeView:complete\n",
+              io.debug_tsc))
+       //     rob_uop(GetRowIdx(clr_rob_idx.bits)).debug_events.fetch_seq))
+
       }
     }
     for (clr <- io.lsu_clr_unsafe) {
@@ -865,7 +874,9 @@ class Rob(
   io.com_load_is_at_rob_head := RegNext(rob_head_uses_ldq(PriorityEncoder(rob_head_vals.asUInt)) &&
                                         !will_commit.reduce(_||_))
 
-
+  for (i <- 0 until numRobEntries) {
+      printf(midas.targetutils.SynthesizePrintf("ROB[%d]: 0x%x DASM(%x)\n", i.U(robAddrSz.W), debug_entry(i).uop.debug_pc, debug_entry(i).uop.debug_inst))
+  }
 
   override def toString: String = BoomCoreStringPrefix(
     "==ROB==",

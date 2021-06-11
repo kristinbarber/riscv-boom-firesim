@@ -264,6 +264,19 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
   def widthMap[T <: Data](f: Int => T) = VecInit((0 until memWidth).map(f))
 
 
+  for (i <- 0 until numLdqEntries) {
+    printf(midas.targetutils.SynthesizePrintf("LQ[%d]: PC:0x%x Address:0x%x\n", 
+      i.U, ldq(i).bits.uop.debug_pc,
+      ldq(i).bits.addr.bits))
+  }
+
+  for (i <- 0 until numStqEntries) {
+    printf(midas.targetutils.SynthesizePrintf("SQ[%d]: PC:0x%x Address:0x%x\n",  
+      i.U, stq(i).bits.uop.debug_pc,
+      stq(i).bits.addr.bits))
+  }
+
+
   //-------------------------------------------------------------
   //-------------------------------------------------------------
   // Enqueue new entries

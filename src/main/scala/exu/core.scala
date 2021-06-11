@@ -370,6 +370,7 @@ class BoomCore(implicit p: Parameters) extends BoomModule
   // **** Fetch Stage/Frontend ****
   //-------------------------------------------------------------
   //-------------------------------------------------------------
+
   io.ifu.redirect_val         := false.B
   io.ifu.redirect_flush       := false.B
 
@@ -1321,6 +1322,38 @@ class BoomCore(implicit p: Parameters) extends BoomModule
   //-------------------------------------------------------------
   //-------------------------------------------------------------
 
+
+  val dec_printed_mask = RegInit(0.U(coreWidth.W))
+  val enablePrintf = WireDefault(false.B)
+  import midas.targetutils.TriggerSink
+  TriggerSink(enablePrintf)
+  when (enablePrintf) {
+     printf(midas.targetutils.SynthesizePrintf("----- Cycle=%d -----\n", debug_tsc_reg))
+     for (w <- 0 until coreWidth) {
+       when(dec_valids(w) && !dec_printed_mask(w)) {
+         printf(midas.targetutils.SynthesizePrintf("%d; O3PipeView:decode:%d\n", dec_uops(w).debug_events.fetch_seq, debug_tsc_reg))
+       }
+       when(dec_fire(w)) {
+         printf(midas.targetutils.SynthesizePrintf("%d; O3PipeView:rename: %d\n", dec_uops(w).debug_events.fetch_seq, debug_tsc_reg))
+       }
+       when (dispatcher.io.ren_uops(w).valid) {
+        printf(midas.targetutils.SynthesizePrintf("%d; O3PipeView:dispatch: %d\n", dispatcher.io.ren_uops(w).bits.debug_events.fetch_seq, debug_tsc_reg))
+       }
+
+       when (dec_ready || io.ifu.flush_icache) {
+         dec_printed_mask := 0.U
+       } .otherwise {
+         dec_printed_mask := dec_valids.asUInt | dec_printed_mask
+       }
+
+       when (rob.io.commit.valids(w)) {
+        printf(midas.targetutils.SynthesizePrintf("%d; O3PipeView:retire:%d:store: 0\n",
+          rob.io.commit.uops(w).debug_events.fetch_seq,
+          debug_tsc_reg))
+       }
+
+     }
+  } 
 
   if (COMMIT_LOG_PRINTF) {
     var new_commit_cnt = 0.U

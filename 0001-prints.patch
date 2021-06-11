@@ -1,0 +1,272 @@
+From 60d7bcc49cabdc7e77dfaa0d0a48ec3402766b79 Mon Sep 17 00:00:00 2001
+From: Cloud User <centos@ip-10-15-150-139.us-west-2.compute.internal>
+Date: Fri, 15 Jan 2021 05:19:00 +0000
+Subject: [PATCH] prints
+
+---
+ src/main/scala/common/micro-op.scala  | 11 +++++++++
+ src/main/scala/exu/core.scala         | 33 +++++++++++++++++++++++++++
+ src/main/scala/exu/rob.scala          | 15 ++++++++++--
+ src/main/scala/ifu/fetch-buffer.scala |  1 +
+ src/main/scala/ifu/frontend.scala     | 31 ++++++++++++++++++++++++-
+ src/main/scala/lsu/lsu.scala          | 12 ++++++++++
+ src/main/scala/lsu/mshrs.scala        |  4 ++++
+ 7 files changed, 104 insertions(+), 3 deletions(-)
+
+diff --git a/src/main/scala/common/micro-op.scala b/src/main/scala/common/micro-op.scala
+index 755fd090..a47d5607 100644
+--- a/src/main/scala/common/micro-op.scala
++++ b/src/main/scala/common/micro-op.scala
+@@ -141,6 +141,8 @@ class MicroOp(implicit p: Parameters) extends BoomBundle
+   // What prediction structure provides the prediction TO this op
+   val debug_tsrc       = UInt(BSRC_SZ.W)
+ 
++  val debug_events = new DebugStageEvents
++
+   // Do we allocate a branch tag for this?
+   // SFB branches don't get a mask, they get a predicate bit
+   def allocate_brtag   = (is_br && !is_sfb) || is_jalr
+@@ -154,6 +156,15 @@ class MicroOp(implicit p: Parameters) extends BoomBundle
+   def fu_code_is(_fu: UInt) = (fu_code & _fu) =/= 0.U
+ }
+ 
++/**
++ * Debug stage events for Fetch stage
++ */
++class DebugStageEvents extends Bundle()
++{
++  // Track the sequence number of each instruction fetched.
++  val fetch_seq        = UInt(32.W)
++}
++
+ /**
+  * Control signals within a MicroOp
+  *
+diff --git a/src/main/scala/exu/core.scala b/src/main/scala/exu/core.scala
+index 01379628..343b3788 100644
+--- a/src/main/scala/exu/core.scala
++++ b/src/main/scala/exu/core.scala
+@@ -369,6 +369,7 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
+   // **** Fetch Stage/Frontend ****
+   //-------------------------------------------------------------
+   //-------------------------------------------------------------
++
+   io.ifu.redirect_val         := false.B
+   io.ifu.redirect_flush       := false.B
+ 
+@@ -1321,6 +1322,38 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
+   //-------------------------------------------------------------
+ 
+ 
++  val dec_printed_mask = RegInit(0.U(coreWidth.W))
++  val enablePrintf = WireDefault(false.B)
++  import midas.targetutils.TriggerSink
++  TriggerSink(enablePrintf)
++  when (enablePrintf) {
++     printf(midas.targetutils.SynthesizePrintf("----- Cycle=%d -----\n", debug_tsc_reg))
++     for (w <- 0 until coreWidth) {
++       when(dec_valids(w) && !dec_printed_mask(w)) {
++         printf(midas.targetutils.SynthesizePrintf("%d; O3PipeView:decode:%d\n", dec_uops(w).debug_events.fetch_seq, debug_tsc_reg))
++       }
++       when(dec_fire(w)) {
++         printf(midas.targetutils.SynthesizePrintf("%d; O3PipeView:rename: %d\n", dec_uops(w).debug_events.fetch_seq, debug_tsc_reg))
++       }
++       when (dispatcher.io.ren_uops(w).valid) {
++        printf(midas.targetutils.SynthesizePrintf("%d; O3PipeView:dispatch: %d\n", dispatcher.io.ren_uops(w).bits.debug_events.fetch_seq, debug_tsc_reg))
++       }
++
++       when (dec_ready || io.ifu.flush_icache) {
++         dec_printed_mask := 0.U
++       } .otherwise {
++         dec_printed_mask := dec_valids.asUInt | dec_printed_mask
++       }
++
++       when (rob.io.commit.valids(w)) {
++        printf(midas.targetutils.SynthesizePrintf("%d; O3PipeView:retire:%d:store: 0\n",
++          rob.io.commit.uops(w).debug_events.fetch_seq,
++          debug_tsc_reg))
++       }
++
++     }
++  } 
++
+   if (COMMIT_LOG_PRINTF) {
+     var new_commit_cnt = 0.U
+ 
+diff --git a/src/main/scala/exu/rob.scala b/src/main/scala/exu/rob.scala
+index 3ad32065..fba55620 100644
+--- a/src/main/scala/exu/rob.scala
++++ b/src/main/scala/exu/rob.scala
+@@ -109,7 +109,7 @@ class RobIo(
+   val flush_frontend = Output(Bool())
+ 
+ 
+-  val debug_tsc = Input(UInt(xLen.W))
++  val debug_tsc = Input(UInt(width=xLen.W))
+ }
+ 
+ /**
+@@ -347,6 +347,10 @@ class Rob(
+         rob_bsy(row_idx)      := false.B
+         rob_unsafe(row_idx)   := false.B
+         rob_predicated(row_idx)  := wb_resp.bits.predicated
++        printf(midas.targetutils.SynthesizePrintf("%d; O3PipeView:complete\n",
++               io.debug_tsc))
++       //     rob_uop(row_idx).debug_events.fetch_seq))
++
+       }
+       // TODO check that fflags aren't overwritten
+       // TODO check that the wb is to a valid ROB entry, give it a time stamp
+@@ -364,6 +368,11 @@ class Rob(
+         rob_unsafe(cidx) := false.B
+         assert (rob_val(cidx) === true.B, "[rob] store writing back to invalid entry.")
+         assert (rob_bsy(cidx) === true.B, "[rob] store writing back to a not-busy entry.")
++
++        printf(midas.targetutils.SynthesizePrintf("%d; O3PipeView:complete\n",
++              io.debug_tsc))
++       //     rob_uop(GetRowIdx(clr_rob_idx.bits)).debug_events.fetch_seq))
++
+       }
+     }
+     for (clr <- io.lsu_clr_unsafe) {
+@@ -865,7 +874,9 @@ class Rob(
+   io.com_load_is_at_rob_head := RegNext(rob_head_uses_ldq(PriorityEncoder(rob_head_vals.asUInt)) &&
+                                         !will_commit.reduce(_||_))
+ 
+-
++  for (i <- 0 until numRobEntries) {
++      printf(midas.targetutils.SynthesizePrintf("ROB[%d]: 0x%x DASM(%x)\n", i.U(robAddrSz.W), debug_entry(i).uop.debug_pc, debug_entry(i).uop.debug_inst))
++  }
+ 
+   override def toString: String = BoomCoreStringPrefix(
+     "==ROB==",
+diff --git a/src/main/scala/ifu/fetch-buffer.scala b/src/main/scala/ifu/fetch-buffer.scala
+index 3372dfd2..dbe5b36d 100644
+--- a/src/main/scala/ifu/fetch-buffer.scala
++++ b/src/main/scala/ifu/fetch-buffer.scala
+@@ -48,6 +48,7 @@ class FetchBuffer(implicit p: Parameters) extends BoomModule
+ 
+     // Was the pipeline redirected? Clear/reset the fetchbuffer.
+     val clear = Input(Bool())
++   
+   })
+ 
+   require (numEntries > fetchWidth)
+diff --git a/src/main/scala/ifu/frontend.scala b/src/main/scala/ifu/frontend.scala
+index 516483be..225ea80d 100644
+--- a/src/main/scala/ifu/frontend.scala
++++ b/src/main/scala/ifu/frontend.scala
+@@ -248,6 +248,8 @@ class FetchBundle(implicit p: Parameters) extends BoomBundle
+   val fsrc    = UInt(BSRC_SZ.W)
+   // Source of the prediction to this bundle
+   val tsrc    = UInt(BSRC_SZ.W)
++
++  val debug_events = Vec(fetchWidth, new DebugStageEvents)
+ }
+ 
+ 
+@@ -572,6 +574,9 @@ class BoomFrontendModule(outer: BoomFrontend) extends LazyModuleImp(outer)
+   val f3_ret_mask     = Wire(Vec(fetchWidth, Bool()))
+   val f3_npc_plus4_mask = Wire(Vec(fetchWidth, Bool()))
+   val f3_btb_mispredicts = Wire(Vec(fetchWidth, Bool()))
++
++  val fseq_reg = RegInit(0.U(xLen.W))
++
+   f3_fetch_bundle.mask := f3_mask.asUInt
+   f3_fetch_bundle.br_mask := f3_br_mask.asUInt
+   f3_fetch_bundle.pc := f3_imemresp.pc
+@@ -582,6 +587,10 @@ class BoomFrontendModule(outer: BoomFrontend) extends LazyModuleImp(outer)
+   f3_fetch_bundle.tsrc := f3_imemresp.tsrc
+   f3_fetch_bundle.shadowed_mask := f3_shadowed_mask
+ 
++  for (w <- 0 until fetchWidth) {
++    f3_fetch_bundle.debug_events(w).fetch_seq := DontCare
++  }
++
+   // Tracks trailing 16b of previous fetch packet
+   val f3_prev_half    = Reg(UInt(16.W))
+   // Tracks if last fetchpacket contained a half-inst
+@@ -765,6 +774,14 @@ class BoomFrontendModule(outer: BoomFrontend) extends LazyModuleImp(outer)
+     f3_prev_is_half := bank_prev_is_half
+     f3_prev_half    := bank_prev_half
+     assert(f3_bpd_resp.io.deq.bits.pc === f3_fetch_bundle.pc)
++
++    for (i <- 0 until fetchWidth) {
++      if (i==0) {
++        f3_fetch_bundle.debug_events(i).fetch_seq := fseq_reg
++      } else {
++        f3_fetch_bundle.debug_events(i).fetch_seq := fseq_reg + PopCount(f3_fetch_bundle.mask.asUInt()(i-1,0))
++      }
++    }
+   }
+ 
+   when (f3_clear) {
+@@ -915,7 +932,6 @@ class BoomFrontendModule(outer: BoomFrontend) extends LazyModuleImp(outer)
+     f4.io.deq.bits.shadowed_mask.asUInt
+   ).asBools
+ 
+-
+   ftq.io.enq.valid          := f4.io.deq.valid && fb.io.enq.ready && !f4_delay
+   ftq.io.enq.bits           := f4.io.deq.bits
+ 
+@@ -982,6 +998,19 @@ class BoomFrontendModule(outer: BoomFrontend) extends LazyModuleImp(outer)
+   io.cpu.debug_fetch_pc := ftq.io.debug_fetch_pc
+ 
+ 
++  when (f3.io.deq.fire()) {
++    fseq_reg := fseq_reg + PopCount(f3_fetch_bundle.mask)
++    val bundle = f3_fetch_bundle
++    for (i <- 0 until fetchWidth) {
++      when (bundle.mask(i)) {
++        printf(midas.targetutils.SynthesizePrintf("%d; O3PipeView:fetch:0x%x:DASM(%x)\n", 
++                                                  bundle.debug_events(i).fetch_seq,
++                                                  bundle.pc(i),
++                                                  bundle.insts(i)))
++      }
++    }
++  }
++
+   override def toString: String =
+     (BoomCoreStringPrefix("====Overall Frontend Params====") + "\n"
+     + icache.toString + bpd.toString)
+diff --git a/src/main/scala/lsu/lsu.scala b/src/main/scala/lsu/lsu.scala
+index fb1738dc..9b92b827 100644
+--- a/src/main/scala/lsu/lsu.scala
++++ b/src/main/scala/lsu/lsu.scala
+@@ -264,6 +264,18 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
+   def widthMap[T <: Data](f: Int => T) = VecInit((0 until memWidth).map(f))
+ 
+ 
++  val enablePrintf = WireDefault(false.B)
++  import midas.targetutils.TriggerSink
++  TriggerSink(enablePrintf)
++  when(enablePrintf) {
++    for (i <- 0 until numLdqEntries) {
++      printf(midas.targetutils.SynthesizePrintf("LoadQueueEntry[%d]: PC:0x%x Address:0x%x\n", 
++        i.U, ldq(i).bits.uop.debug_pc,
++        ldq(i).bits.addr.bits))
++    }
++  }
++
++
+   //-------------------------------------------------------------
+   //-------------------------------------------------------------
+   // Enqueue new entries
+diff --git a/src/main/scala/lsu/mshrs.scala b/src/main/scala/lsu/mshrs.scala
+index b7a481c9..05634b6f 100644
+--- a/src/main/scala/lsu/mshrs.scala
++++ b/src/main/scala/lsu/mshrs.scala
+@@ -569,6 +569,10 @@ class BoomMSHRFile(implicit edge: TLEdgeOut, p: Parameters) extends BoomModule()
+   val lb_read_arb  = Module(new Arbiter(new LineBufferReadReq, cfg.nMSHRs))
+   val lb_write_arb = Module(new Arbiter(new LineBufferWriteReq, cfg.nMSHRs))
+ 
++  for (i <- 0 until nLBEntries) {
++    printf (midas.targetutils.SynthesizePrintf("LFB[%d]:%x\n", i.U, lb(i)))
++  }
++
+   lb_read_arb.io.out.ready  := false.B
+   lb_write_arb.io.out.ready := true.B
+ 
+-- 
+2.24.3
+
